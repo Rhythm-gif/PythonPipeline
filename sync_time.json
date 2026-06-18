@@ -1,0 +1,16 @@
+{
+    "openalex": {
+        "source": "openalex",
+        "last_sync": "2026-06-18T11:28:39.172807",
+        "last_count": 5,
+        "last_error": null,
+        "updated_at": "2026-06-18T11:29:12.979784"
+    },
+    "pubmed": {
+        "source": "pubmed",
+        "last_sync": "2026-06-18T11:29:12.984171",
+        "last_count": 5,
+        "last_error": null,
+        "updated_at": "2026-06-18T11:32:16.119717"
+    }
+}

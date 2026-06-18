@@ -144,11 +144,11 @@ def _author_to_score(max_h: float, avg_h: float, num_authors: int) -> float:
 
 def determine_status(
     llm_decision: str,
+    final_score: float,
 ) -> PaperStatus:
     """
-    Use the LLM's own verdict to approve or reject a paper.
-    The LLM is the sole decision maker — no numerical threshold.
+    Approve paper if the final_score is >= 60.
     """
-    if llm_decision == "approved":
+    if final_score >= 60.0:
         return PaperStatus.APPROVED
     return PaperStatus.REJECTED

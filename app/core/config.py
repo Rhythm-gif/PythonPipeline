@@ -18,49 +18,35 @@ class Settings(BaseSettings):
     )
 
     # ── LLM ──────────────────────────────────────────────────
-    llm_provider: Literal["openai", "gemini", "openrouter", "ollama"] = "openai"
+    llm_provider: Literal["openai", "gemini", "openrouter"] = "openai"
     openai_api_key: str = ""
     gemini_api_key: str = ""
     openrouter_api_key: str = ""
-    ollama_base_url: str = "http://localhost:11434"
     llm_model: str = "gpt-4o-mini"
 
-    # ── Database (Removed) ────────────────────────────────────
-    # The pipeline is now fully stateless and uses no database!
+    # ── MongoDB ───────────────────────────────────────────────
+    mongodb_uri: str = "mongodb://localhost:27017"
+    mongodb_db: str = "pacr"
 
     # ── External APIs ─────────────────────────────────────────
     semantic_scholar_api_key: str = ""
     ncbi_api_key: str = ""
 
-    # ── PACR Backend Integration ──────────────────────────────
-    pacr_backend_url: str = "http://localhost:8000"
-    pacr_internal_api_key: str = ""
-
     # ── Scheduler ─────────────────────────────────────────────
-    cron_expression: str = "0 9 * * 0"
+    fetch_interval_minutes: int = Field(default=60, ge=1)
     papers_per_source: int = Field(default=50, ge=1, le=500)
 
-    # ── Scoring weights (must sum to 1.0) ────────────────────────────────────
-    # LLM score weight  : 70%
-    weight_llm: float = 0.70
+    # ── Scoring ───────────────────────────────────────────────
+    approval_threshold: float = Field(default=80.0, ge=0, le=100)
+
+    # LLM score weight  : 50%
+    weight_llm: float = 0.50
+    # Citation score    : 20%
+    weight_citation: float = 0.20
     # Journal score     : 15%
     weight_journal: float = 0.15
     # Author score      : 15%
     weight_author: float = 0.15
-
-    @field_validator("weight_author")
-    @classmethod
-    def weights_must_sum_to_one(cls, v: float, info) -> float:
-        """Ensure all scoring weights sum to 1.0."""
-        data = info.data
-        total = (
-            data.get("weight_llm", 0)
-            + data.get("weight_journal", 0)
-            + v
-        )
-        if not (0.999 < total < 1.001):
-            raise ValueError(f"Scoring weights must sum to 1.0, got {total:.3f}")
-        return v
 
     # ── API Server ────────────────────────────────────────────
     api_host: str = "0.0.0.0"
@@ -83,7 +69,6 @@ class Settings(BaseSettings):
             "openai": self.openai_api_key,
             "gemini": self.gemini_api_key,
             "openrouter": self.openrouter_api_key,
-            "ollama": "not-required",
         }
         key = mapping.get(self.llm_provider, "")
         if not key:

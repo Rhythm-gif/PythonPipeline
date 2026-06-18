@@ -19,7 +19,6 @@ from tenacity import (
 )
 
 from app.common.logging import get_logger
-from app.papers import repository as repo
 from app.papers.models import Paper, PaperSource
 
 logger = get_logger(__name__)

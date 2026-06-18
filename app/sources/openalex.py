@@ -43,7 +43,7 @@ class OpenAlexConnector(BaseConnector):
                 "select": (
                     "id,doi,title,abstract_inverted_index,authorships,"
                     "publication_date,primary_location,cited_by_count,"
-                    "keywords,concepts,type,grants"
+                    "keywords,concepts,type"
                 ),
             }
 
