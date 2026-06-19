@@ -98,15 +98,20 @@ async def _process_source(connector, limit: int, batch: list[dict]) -> dict:
                 
         # Batch Check Duplicates against Next.js
         dois_to_check = [p.doi for p in fetched_papers if p.doi]
+        urls_to_check = [p.source_url for p in fetched_papers if getattr(p, "source_url", None)]
+        
         existing_dois = set()
-        if dois_to_check:
-            existing_list = await pacr_client.check_exists_batch(dois_to_check)
-            existing_dois = set(existing_list)
-            counts["duplicate"] += len(existing_list)
+        existing_urls = set()
+        
+        if dois_to_check or urls_to_check:
+            ex_dois, ex_urls = await pacr_client.check_exists_batch(dois_to_check, urls_to_check)
+            existing_dois = set(ex_dois)
+            existing_urls = set(ex_urls)
             
         for paper in fetched_papers:
-            if paper.doi in existing_dois:
+            if paper.doi in existing_dois or (getattr(paper, "source_url", None) and paper.source_url in existing_urls):
                 logger.debug("Duplicate skipped (Next.js Batch API)", title=paper.title[:60])
+                counts["duplicate"] += 1
                 continue
                 
             try:
@@ -182,14 +187,14 @@ async def _ingest_paper(paper: Paper, counts: dict, batch: list[dict]) -> None:
         approved_payload = {
             "title": paper.title or "",
             "abstract": paper.abstract or "",
-            "doi": paper.doi or "",
+            "doi": paper.doi,
             "authors": [a.name for a in paper.authors] if paper.authors else [],
             "url": paper.source_url or "",
             "source": paper.source.value,
             "score": scores.final_score,
             "tags": paper.keywords or [],
             "dateOfPublication": paper.publication_date.isoformat() if paper.publication_date else None,
-            "journalName": paper.journal or ""
+            "journalName": paper.journal or "",
         }
         
         logger.debug("Built NestJS Payload", payload=approved_payload)

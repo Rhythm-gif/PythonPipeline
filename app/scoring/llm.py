@@ -186,7 +186,7 @@ async def score_paper(
         raw = await provider.complete(prompt)
         return _parse_response(raw)
     except Exception as exc:
-        logger.error("LLM scoring failed", error=str(exc), title=title[:60])
+        logger.error("LLM scoring failed", error=repr(exc), title=title[:60])
         return AIReview(
             novelty=0,
             credibility=0,

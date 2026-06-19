@@ -24,34 +24,34 @@ class PacrClient:
             "Content-Type": "application/json",
         }
 
-    async def check_exists_batch(self, dois: list[str]) -> list[str]:
+    async def check_exists_batch(self, dois: list[str], urls: list[str]) -> tuple[list[str], list[str]]:
         """
-        Check which DOIs already exist in the Next.js database using a batch request.
-        Returns a list of DOIs that exist.
+        Check which DOIs or URLs already exist in the Next.js database using a batch request.
+        Returns a tuple of (existing_dois, existing_urls).
         """
-        if not dois:
-            return []
+        if not dois and not urls:
+            return [], []
         
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 url = f"{self.base_url}/api/internal/check-exists-batch"
-                payload = {"dois": dois}
+                payload = {"dois": dois, "urls": urls}
                 resp = await client.post(url, json=payload, headers=self._headers())
                 
                 # If 404, we assume endpoint doesn't exist yet, return empty
                 if resp.status_code == 404:
-                    return []
+                    return [], []
                     
                 resp.raise_for_status()
                 response_json = resp.json()
                 
-                # NestJS wraps responses in { "data": { "existing_dois": [...] } }
+                # NestJS wraps responses in { "data": { "existing_dois": [...], "existing_urls": [...] } }
                 inner_data = response_json.get("data", {})
-                return inner_data.get("existing_dois", [])
+                return inner_data.get("existing_dois", []), inner_data.get("existing_urls", [])
         except Exception as exc:
             logger.warning("Failed to check batch duplicates from PACR backend", error=str(exc))
             # On error, safely assume false (empty) so we don't drop potentially good papers
-            return []
+            return [], []
 
     async def publish_batch(self, batch: list[dict]) -> dict:
         """
