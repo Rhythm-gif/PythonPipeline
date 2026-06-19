@@ -28,11 +28,11 @@ class OpenAlexConnector(BaseConnector):
         per_page = min(limit, 200)
         fetched = 0
 
-        current_year = datetime.utcnow().year
+        today_str = datetime.utcnow().date().isoformat()
         filter_parts = [
             "has_abstract:true",
             "type:article",
-            f"publication_year:<={current_year}",
+            f"to_publication_date:{today_str}",
         ]
         if since:
             filter_parts.append(f"from_publication_date:{since.date().isoformat()}")
