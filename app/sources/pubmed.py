@@ -156,9 +156,12 @@ class PubMedConnector(BaseConnector):
             if id_node.get("EIdType") == "doi":
                 doi = id_node.text
 
-        # Journal
+        # Journal & ISSN
         journal_node = article.find(".//Journal/Title")
         journal = journal_node.text if journal_node is not None else None
+
+        issn_node = article.find(".//Journal/ISSN")
+        issn = issn_node.text if issn_node is not None else None
 
         # Publication date
         pub_date = self._parse_date(article)
@@ -178,6 +181,7 @@ class PubMedConnector(BaseConnector):
             authors=authors,
             publication_date=pub_date,
             journal=journal,
+            issn=issn,
             citation_count=0,  # enriched later via Semantic Scholar
             keywords=keywords,
             source_url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",

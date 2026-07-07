@@ -1,16 +1,16 @@
 """
 PACR Pipeline - Pipeline Orchestrator
 
-Flow: Fetch -> Next.js Deduplicate -> Enrich -> LLM Score -> Approve? -> Publish Batch to Next.js
+Flow: Fetch -> Scimago Q-value Check -> Approve? -> Enrich -> Publish Batch to Next.js
 
-Only APPROVED papers are pushed to the PACR Next.js API.
-Rejected papers are simply discarded - nothing is stored locally.
+Only APPROVED (Q1/Q2) papers are enriched and pushed to the PACR Next.js API.
+Rejected papers are immediately discarded - nothing is stored locally.
 """
 from __future__ import annotations
 
 from datetime import datetime
 
-from app.sources import ArxivConnector, OpenAlexConnector, PubMedConnector
+from app.sources import OpenAlexConnector, PubMedConnector
 from app.config.settings import get_settings
 from app.pipeline.enrichment import enrich_paper
 from app.common.logging import get_logger
@@ -29,8 +29,7 @@ async def run_pipeline() -> dict:
     Returns a summary dict with counts.
     """
     settings = get_settings()
-    # Hardcoded to 5 per source as requested
-    limit = 5
+    limit = settings.papers_per_source
     start = datetime.utcnow()
 
     summary = {
@@ -46,7 +45,6 @@ async def run_pipeline() -> dict:
     sources = [
         (PaperSource.OPENALEX, OpenAlexConnector()),
         (PaperSource.PUBMED, PubMedConnector()),
-        (PaperSource.ARXIV, ArxivConnector()),
     ]
 
     logger.info("Pipeline started", limit_per_source=limit)
@@ -98,20 +96,15 @@ async def _process_source(connector, limit: int, batch: list[dict]) -> dict:
                 
         # Batch Check Duplicates against Next.js
         dois_to_check = [p.doi for p in fetched_papers if p.doi]
-        urls_to_check = [p.source_url for p in fetched_papers if getattr(p, "source_url", None)]
-        
         existing_dois = set()
-        existing_urls = set()
-        
-        if dois_to_check or urls_to_check:
-            ex_dois, ex_urls = await pacr_client.check_exists_batch(dois_to_check, urls_to_check)
-            existing_dois = set(ex_dois)
-            existing_urls = set(ex_urls)
+        if dois_to_check:
+            existing_list = await pacr_client.check_exists_batch(dois_to_check)
+            existing_dois = set(existing_list)
+            counts["duplicate"] += len(existing_list)
             
         for paper in fetched_papers:
-            if paper.doi in existing_dois or (getattr(paper, "source_url", None) and paper.source_url in existing_urls):
+            if paper.doi in existing_dois:
                 logger.debug("Duplicate skipped (Next.js Batch API)", title=paper.title[:60])
-                counts["duplicate"] += 1
                 continue
                 
             try:
@@ -125,15 +118,18 @@ async def _process_source(connector, limit: int, batch: list[dict]) -> dict:
                 )
                 counts["error"] += 1
 
-        # Publish approved batch to PACR Next.js API
+        # ONLY after successfully processing and potentially publishing, update sync state
         if batch:
             logger.info(f"Publishing batch of {len(batch)} approved papers to PACR...")
-            await pacr_client.publish_batch(batch)
+            publish_result = await pacr_client.publish_batch(batch)
+            logger.info("Batch publish result", **publish_result.get("metaData", {}))
             
         await repo.update_sync_state(source, last_sync=start, count=counts["fetched"])
 
     except Exception as exc:
         logger.error("Source sync failed", source=source.value, error=str(exc))
+        # Important: We do not update last_sync if we hit an error (especially during publish),
+        # so that the next run will fetch these papers again instead of skipping them.
         counts["error"] += 1
 
     return counts
@@ -144,74 +140,69 @@ async def _ingest_paper(paper: Paper, counts: dict, batch: list[dict]) -> None:
     Full pipeline for a single paper.
 
     Steps:
-      1. Enrichment    - fetch extra metadata (Crossref, Semantic Scholar)
-      2. LLM Scoring   - send to LLM for review
-      3. Decision      - approved -> add to batch payload | rejected -> discard
+      1. Scimago Q-value Check — look up journal ISSN against Scimago database
+      2. Decision             — Q1/Q2 approved, rest rejected
+      3. Lazy Enrichment      — only for approved papers: fetch Crossref/S2 metadata
+      4. Publish              — add enriched paper to batch for Next.js API
     """
-    # Step 1: Metadata Enrichment
+    # Step 1: Metadata Enrichment (Lazy)
+    # Moved to after approval.
     paper_dict = paper.model_dump()
 
+    # Step 2: LLM Scoring (Bypassed in favor of Scimago)
     try:
-        enriched = await enrich_paper(paper_dict)
-        if enriched:
-            paper_dict.update(enriched)
-            for key, val in enriched.items():
-                if hasattr(paper, key):
-                    setattr(paper, key, val)
-    except Exception as exc:
-        logger.warning("Enrichment failed (continuing)", title=paper.title[:60], error=str(exc))
-
-    # Step 2: LLM Scoring
-    try:
-        scores, llm_decision = await compute_scores(paper_dict)
-        logger.info(
-            "Paper scored",
-            title=paper.title[:60],
-            llm=scores.llm_score,
-            journal=scores.journal_score,
-            author=scores.author_score,
-            final=scores.final_score,
-            decision=llm_decision,
-        )
+        scores = await compute_scores(paper_dict)
     except Exception as exc:
         logger.error("Scoring failed", title=paper.title[:60], error=str(exc))
         counts["error"] += 1
         return
 
     # Step 3: Approval Decision
-    status = determine_status(llm_decision, scores.final_score)
+    status = determine_status(scores)
+    
+    logger.info(
+        "Paper scored",
+        title=paper.title[:60],
+        q_value=scores.scimago_q_value,
+        status=status.value,
+    )
 
     if status == PaperStatus.APPROVED:
-        # Build the payload perfectly matching NestJS PublishBatchDto
-        # It expects: title, abstract, doi, authors (array of strings), url, source, score, tags, dateOfPublication, journalName
+        # Step 4: Lazy Enrichment (only for approved papers)
+        try:
+            enriched = await enrich_paper(paper_dict)
+            if enriched:
+                paper_dict.update(enriched)
+                for key, val in enriched.items():
+                    if hasattr(paper, key):
+                        setattr(paper, key, val)
+        except Exception as exc:
+            logger.warning("Enrichment failed (continuing)", title=paper.title[:60], error=str(exc))
+            
+        # Build the payload exactly matching the PACR backend PaperDto schema
         approved_payload = {
-            "title": paper.title or "",
-            "abstract": paper.abstract or "",
+            "title": paper.title,
+            "abstract": paper.abstract or "No abstract available.",
             "doi": paper.doi,
-            "authors": [a.name for a in paper.authors] if paper.authors else [],
-            "url": paper.source_url or "",
+            "authors": [a.name for a in paper.authors],  # backend expects list of name strings
+            "url": paper.source_url,
             "source": paper.source.value,
-            "score": scores.final_score,
-            "tags": paper.keywords or [],
+            "tags": paper.keywords,
             "dateOfPublication": paper.publication_date.isoformat() if paper.publication_date else None,
-            "journalName": paper.journal or "",
+            "journalName": paper.journal,
         }
-        
-        logger.debug("Built NestJS Payload", payload=approved_payload)
-        
         batch.append(approved_payload)
         counts["approved"] += 1
         logger.info(
             "Paper approved and added to batch",
             title=paper.title[:60],
             doi=paper.doi,
-            score=scores.final_score,
+            q_value=scores.scimago_q_value,
         )
     else:
         counts["rejected"] += 1
         logger.info(
             "Paper rejected",
             title=paper.title[:60],
-            score=scores.final_score,
-            decision=llm_decision,
+            q_value=scores.scimago_q_value,
         )

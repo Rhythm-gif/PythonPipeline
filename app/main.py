@@ -10,7 +10,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.common.logging import configure_logging, get_logger
-from app.common.models import ApiResponse, ServiceStatusEnum
 from app.pipeline.scheduler import get_scheduler_status, start_scheduler, stop_scheduler
 from app.pipeline.router import router as pipeline_router
 

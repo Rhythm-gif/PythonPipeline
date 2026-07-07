@@ -16,7 +16,7 @@ from app.papers.models import PaperSource, SyncState
 logger = get_logger(__name__)
 
 # Save the state file in the root of the project
-STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "sync_time.json")
+STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "sync_state.json")
 
 async def get_sync_state(source: PaperSource) -> Optional[SyncState]:
     """Retrieve the last sync state for a given source from the JSON file."""

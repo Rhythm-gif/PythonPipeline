@@ -28,12 +28,7 @@ class OpenAlexConnector(BaseConnector):
         per_page = min(limit, 200)
         fetched = 0
 
-        today_str = datetime.utcnow().date().isoformat()
-        filter_parts = [
-            "has_abstract:true",
-            "type:article",
-            f"to_publication_date:{today_str}",
-        ]
+        filter_parts = ["has_abstract:true", "type:article", "primary_location.source.has_issn:true"]
         if since:
             filter_parts.append(f"from_publication_date:{since.date().isoformat()}")
 
@@ -111,10 +106,11 @@ class OpenAlexConnector(BaseConnector):
                 except ValueError:
                     pass
 
-            # Journal
+            # Journal and ISSN
             location = work.get("primary_location") or {}
             source_info = location.get("source") or {}
             journal = source_info.get("display_name")
+            issn = source_info.get("issn_l")
 
             # DOI
             doi = work.get("doi", "")
@@ -136,15 +132,6 @@ class OpenAlexConnector(BaseConnector):
                 if funder and funder not in funding_sources:
                     funding_sources.append(funder)
 
-            # Source URL — prefer real paper URL over OpenAlex internal URL
-            landing_url = location.get("landing_page_url") or location.get("pdf_url")
-            if doi:
-                source_url = f"https://doi.org/{doi}"
-            elif landing_url:
-                source_url = landing_url
-            else:
-                source_url = f"https://openalex.org/{external_id}"
-
             return Paper(
                 source=PaperSource.OPENALEX,
                 external_id=external_id,
@@ -154,10 +141,11 @@ class OpenAlexConnector(BaseConnector):
                 authors=authors,
                 publication_date=pub_date,
                 journal=journal,
+                issn=issn,
                 citation_count=work.get("cited_by_count", 0),
                 funding_sources=funding_sources,
                 keywords=keywords,
-                source_url=source_url,
+                source_url=f"https://openalex.org/{external_id}",
             )
         except Exception as exc:
             logger.warning("OpenAlex normalization failed", error=str(exc))

@@ -10,7 +10,6 @@ from app.sources.crossref import CrossrefConnector
 from app.sources.datacite import DataCiteConnector
 from app.sources.semantic_scholar import SemanticScholarConnector
 from app.common.logging import get_logger
-from app.papers.models import PaperSource
 
 logger = get_logger(__name__)
 
@@ -58,8 +57,6 @@ async def enrich_paper(paper_doc: dict) -> dict:
         s2_data = None
         if doi:
             s2_data = await s2.enrich_by_doi(doi)
-        elif source == PaperSource.ARXIV.value:
-            s2_data = await s2.enrich_by_arxiv(external_id)
 
         if not s2_data:
             # Fallback: title search

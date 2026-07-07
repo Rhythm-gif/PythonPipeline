@@ -2,8 +2,9 @@
 PACR Pipeline — Scheduler
 APScheduler-based scheduler that runs the pipeline automatically.
 
-Uses standard Cron expression for triggering and MongoDB-backed distributed 
-locks to prevent overlapping runs across multiple server instances.
+Uses standard Cron expression for triggering. 
+Note: MongoDB distributed locking was removed to make this service stateless.
+If you run multiple instances of this Python pipeline, they may overlap.
 """
 from __future__ import annotations
 
@@ -16,7 +17,6 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.config.settings import get_settings
 from app.common.logging import get_logger
-from app.pipeline.locks import with_lock, init_locks_collection
 
 logger = get_logger(__name__)
 
@@ -40,15 +40,8 @@ async def _execute_pipeline():
 
 
 async def _pipeline_job() -> None:
-    """Wrapper that enforces distributed locking."""
-    # lockAtMostFor: 1 hour (failsafe if process crashes)
-    # lockAtLeastFor: 30 minutes (minimum time between runs)
-    await with_lock(
-        name="weekly-summary-pacr",
-        lock_at_most_for_ms=4 * 60 * 60 * 1000,   # 4 hours max (failsafe)
-        lock_at_least_for_ms=23 * 60 * 60 * 1000, # 23 hours min gap (once-a-day)
-        func=_execute_pipeline,
-    )
+    """Trigger the pipeline directly."""
+    await _execute_pipeline()
 
 
 def start_scheduler() -> AsyncIOScheduler:
@@ -81,9 +74,6 @@ def start_scheduler() -> AsyncIOScheduler:
     )
     _scheduler.start()
     
-    # Initialize locks collection (creates index) asynchronously in background
-    asyncio.create_task(init_locks_collection())
-    
     logger.info("Scheduler started with cron", cron=cron_expr)
     return _scheduler
 
@@ -114,6 +104,6 @@ def get_scheduler_status() -> dict:
 
 
 async def trigger_pipeline_now() -> dict:
-    """Manually trigger the pipeline (for admin use only). Ignores lock to force run."""
+    """Manually trigger the pipeline (for admin use only)."""
     await _execute_pipeline()
     return {"triggered": True, "at": datetime.utcnow().isoformat()}
