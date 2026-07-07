@@ -31,7 +31,7 @@ PAPERS_PER_SOURCE=5
 Start the FastAPI orchestrator. **No database required.**
 
 ```bash
-uvicorn app.main:app --reload --port 8001
+python -m uvicorn app.main:app --reload --port 8001
 ```
 
 ### 4. Trigger the Pipeline
