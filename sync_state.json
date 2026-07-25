@@ -1,16 +1,16 @@
 {
     "openalex": {
         "source": "openalex",
-        "last_sync": "2026-06-30T22:52:46.048256",
-        "last_count": 50,
+        "last_sync": "2026-07-25T11:00:45.757738",
+        "last_count": 0,
         "last_error": null,
-        "updated_at": "2026-06-30T22:52:51.595862"
+        "updated_at": "2026-07-25T11:00:47.962988"
     },
     "pubmed": {
         "source": "pubmed",
-        "last_sync": "2026-06-30T22:52:24.155160",
-        "last_count": 24,
+        "last_sync": "2026-07-25T11:00:47.964821",
+        "last_count": 30,
         "last_error": null,
-        "updated_at": "2026-06-30T22:52:31.581506"
+        "updated_at": "2026-07-25T11:02:26.857816"
     }
 }

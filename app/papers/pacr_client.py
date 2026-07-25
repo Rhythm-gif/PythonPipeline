@@ -4,6 +4,9 @@ Handles communication with the PACR backend to verify and publish papers.
 """
 from __future__ import annotations
 
+import json
+from typing import Optional
+
 import httpx
 
 from app.config.settings import get_settings
@@ -18,58 +21,52 @@ class PacrClient:
         self.base_url = self.settings.pacr_backend_url.rstrip("/")
         self.api_key = self.settings.pacr_internal_api_key
 
-    def _headers(self) -> dict:
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+    def _auth_headers(self) -> dict:
+        """Return auth-only headers (no Content-Type — let httpx set it for multipart)."""
+        return {"Authorization": f"Bearer {self.api_key}"}
 
-    async def check_exists_batch(self, dois: list[str]) -> list[str]:
+    async def publish_single_with_pdf(
+        self, paper_dict: dict, pdf_bytes: Optional[bytes] = None
+    ) -> dict:
         """
-        Check which DOIs already exist in the Next.js database using a batch request.
-        Returns a list of DOIs that exist.
+        Publish a single approved paper to the Next.js backend.
+
+        Sends a multipart/form-data request with:
+          - metadata: stringified JSON of the paper details
+          - pdf:      (optional) raw PDF binary
+
+        The backend handles deduplication and S3 upload automatically.
+        Returns {"success": true, "published": 1} for new papers,
+                {"success": true, "published": 0} for duplicates.
         """
-        if not dois:
-            return []
-        
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                url = f"{self.base_url}/api/internal/check-exists-batch"
-                payload = {"dois": dois}
-                resp = await client.post(url, json=payload, headers=self._headers())
-                
-                # If 404, we assume endpoint doesn't exist yet, return empty
-                if resp.status_code == 404:
-                    return []
-                    
-                resp.raise_for_status()
-                response_json = resp.json()
-                data = response_json.get("data", {})
-                return data.get("existing_dois", [])
-        except Exception as exc:
-            logger.warning("Failed to check batch duplicates from PACR backend", error=str(exc))
-            # On error, safely assume false (empty) so we don't drop potentially good papers
-            return []
+            async with httpx.AsyncClient(timeout=60) as client:
+                url = f"{self.base_url}/api/internal/publish-single-paper"
 
-    async def publish_batch(self, batch: list[dict]) -> dict:
-        """
-        Publish a batch of approved papers to the Next.js backend.
-        """
-        if not batch:
-            return {"success": True, "published": 0}
+                # Map Python's 'source_url' to NestJS's expected 'url'
+                if paper_dict.get("source_url"):
+                    paper_dict["url"] = paper_dict["source_url"]
 
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                url = f"{self.base_url}/api/internal/publish-research-papers-batch"
-                payload = {"papers": batch}
-                resp = await client.post(url, json=payload, headers=self._headers())
+                # Always multipart — backend expects a consistent format
+                files: dict = {
+                    "metadata": (None, json.dumps(paper_dict), "application/json"),
+                }
+                if pdf_bytes:
+                    files["pdf"] = ("paper.pdf", pdf_bytes, "application/pdf")
+
+                resp = await client.post(
+                    url, files=files, headers=self._auth_headers()
+                )
                 resp.raise_for_status()
                 return resp.json()
-        except httpx.HTTPStatusError as exc:
-            logger.error("Failed to publish batch to PACR backend", error=str(exc), response_body=exc.response.text)
-            raise
+
         except Exception as exc:
-            logger.error("Failed to publish batch to PACR backend", error=str(exc))
+            logger.error(
+                "Failed to publish single paper to PACR backend",
+                title=str(paper_dict.get("title", ""))[:60],
+                error=str(exc),
+            )
             raise
+
 
 pacr_client = PacrClient()

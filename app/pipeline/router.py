@@ -29,5 +29,6 @@ async def trigger_now(request: Request):
             "total_rejected": summary.get("total_rejected"),
             "total_duplicate": summary.get("total_duplicate"),
             "total_error": summary.get("total_error"),
+            "total_published_to_backend": summary.get("total_published_to_backend"),
         },
     )

@@ -71,6 +71,7 @@ def start_scheduler() -> AsyncIOScheduler:
         name="PACR Research Ingestion Pipeline",
         replace_existing=True,
         max_instances=1,
+        misfire_grace_time=None,
     )
     _scheduler.start()
     

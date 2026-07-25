@@ -1,10 +1,11 @@
 """
 PACR Pipeline - Pipeline Orchestrator
 
-Flow: Fetch -> Scimago Q-value Check -> Approve? -> Enrich -> Publish Batch to Next.js
+Flow: Fetch -> Resolve PDF -> Score (Q1/Q2 + DOI + pdf_url) -> Approve? -> Publish One-by-One to Next.js
 
-Only APPROVED (Q1/Q2) papers are enriched and pushed to the PACR Next.js API.
-Rejected papers are immediately discarded - nothing is stored locally.
+Only APPROVED papers (Q1/Q2, has DOI, has pdf_url) are pushed to the PACR Next.js API.
+PDF resolution runs before scoring so that paper.pdf_url is populated when determine_status() checks it.
+Rejected papers are simply discarded - nothing is stored locally.
 """
 from __future__ import annotations
 
@@ -17,15 +18,21 @@ from app.common.logging import get_logger
 from app.papers import file_repository as repo
 from app.papers.pacr_client import pacr_client
 from app.papers.models import Paper, PaperSource, PaperStatus
+from app.pdf_resolver import pdf_resolver
 from app.scoring.engine import compute_scores, determine_status
 
 logger = get_logger(__name__)
 
 
+# Maximum number of papers to publish to the backend per cron run (across all sources)
+MAX_PUBLISH_PER_RUN = 5
+
+
 async def run_pipeline() -> dict:
     """
     Execute the full ingestion pipeline for all sources.
-    Only approved papers are published to the PACR Next.js API.
+    Only approved papers (with a resolved PDF) are published to the PACR backend.
+    Stops publishing once MAX_PUBLISH_PER_RUN papers are sent in this run.
     Returns a summary dict with counts.
     """
     settings = get_settings()
@@ -40,6 +47,7 @@ async def run_pipeline() -> dict:
         "total_rejected": 0,
         "total_duplicate": 0,
         "total_error": 0,
+        "total_published_to_backend": 0,
     }
 
     sources = [
@@ -47,19 +55,30 @@ async def run_pipeline() -> dict:
         (PaperSource.PUBMED, PubMedConnector()),
     ]
 
-    logger.info("Pipeline started", limit_per_source=limit)
+    logger.info("Pipeline started", limit_per_source=limit, max_publish_per_run=MAX_PUBLISH_PER_RUN)
+
+    # Shared mutable counter — passed into each source so the cap is global across all sources
+    run_publish_count = {"count": 0}
 
     for source, connector in sources:
+        if run_publish_count["count"] >= MAX_PUBLISH_PER_RUN:
+            logger.info(
+                "Run publish cap reached — skipping remaining sources",
+                cap=MAX_PUBLISH_PER_RUN,
+                source=source.value,
+            )
+            break
+
         logger.info("Pipeline: starting source", source=source.value)
-        batch: list[dict] = []
-        result = await _process_source(connector, limit, batch)
-            
+        result = await _process_source(connector, limit, run_publish_count)
+
         summary["sources"][source.value] = result
         summary["total_fetched"] += result.get("fetched", 0)
         summary["total_approved"] += result.get("approved", 0)
         summary["total_rejected"] += result.get("rejected", 0)
         summary["total_duplicate"] += result.get("duplicate", 0)
         summary["total_error"] += result.get("error", 0)
+        summary["total_published_to_backend"] += result.get("published_to_backend", 0)
 
     summary["completed_at"] = datetime.utcnow().isoformat()
     summary["duration_seconds"] = (datetime.utcnow() - start).total_seconds()
@@ -72,8 +91,8 @@ async def run_pipeline() -> dict:
     return summary
 
 
-async def _process_source(connector, limit: int, batch: list[dict]) -> dict:
-    """Process a single source connector, batch publish to Next.js, and return counts."""
+async def _process_source(connector, limit: int, run_publish_count: dict) -> dict:
+    """Process a single source connector, publish to backend individually, and return counts."""
     source = connector.source
     state = await repo.get_sync_state(source)
     since = state.last_sync if state else None
@@ -84,6 +103,12 @@ async def _process_source(connector, limit: int, batch: list[dict]) -> dict:
         "rejected": 0,
         "duplicate": 0,
         "error": 0,
+        "published_to_backend": 0,
+        # Rejection reason breakdown for diagnostics
+        "rejected_q3_q4": 0,
+        "rejected_no_doi": 0,
+        "rejected_no_pdf": 0,
+        "rejected_no_oa_signal": 0,
     }
     start = datetime.utcnow()
 
@@ -93,22 +118,19 @@ async def _process_source(connector, limit: int, batch: list[dict]) -> dict:
             async for paper in connector.fetch_latest(since=since, limit=limit):
                 fetched_papers.append(paper)
                 counts["fetched"] += 1
-                
-        # Batch Check Duplicates against Next.js
-        dois_to_check = [p.doi for p in fetched_papers if p.doi]
-        existing_dois = set()
-        if dois_to_check:
-            existing_list = await pacr_client.check_exists_batch(dois_to_check)
-            existing_dois = set(existing_list)
-            counts["duplicate"] += len(existing_list)
-            
+
         for paper in fetched_papers:
-            if paper.doi in existing_dois:
-                logger.debug("Duplicate skipped (Next.js Batch API)", title=paper.title[:60])
-                continue
-                
+            # Stop processing more papers once the per-run cap is hit
+            if run_publish_count["count"] >= MAX_PUBLISH_PER_RUN:
+                logger.info(
+                    "Run publish cap reached — stopping paper ingestion for this source",
+                    cap=MAX_PUBLISH_PER_RUN,
+                    source=source.value,
+                )
+                break
+
             try:
-                await _ingest_paper(paper, counts, batch)
+                await _ingest_paper(paper, counts, run_publish_count)
             except Exception as exc:
                 logger.error(
                     "Paper ingestion error",
@@ -118,53 +140,81 @@ async def _process_source(connector, limit: int, batch: list[dict]) -> dict:
                 )
                 counts["error"] += 1
 
-        # ONLY after successfully processing and potentially publishing, update sync state
-        if batch:
-            logger.info(f"Publishing batch of {len(batch)} approved papers to PACR...")
-            publish_result = await pacr_client.publish_batch(batch)
-            logger.info("Batch publish result", **publish_result.get("metaData", {}))
-            
+        logger.info(f"Total number of papers approved: {counts['approved']}")
+        logger.info(f"Total posts created: {counts['published_to_backend']}")
+        logger.info(
+            "Rejection breakdown for this source",
+            rejected_q3_q4=counts["rejected_q3_q4"],
+            rejected_no_doi=counts["rejected_no_doi"],
+            rejected_no_pdf_bytes=counts["rejected_no_pdf"],
+            rejected_no_oa_signal=counts["rejected_no_oa_signal"],
+        )
+
         await repo.update_sync_state(source, last_sync=start, count=counts["fetched"])
 
     except Exception as exc:
         logger.error("Source sync failed", source=source.value, error=str(exc))
-        # Important: We do not update last_sync if we hit an error (especially during publish),
-        # so that the next run will fetch these papers again instead of skipping them.
         counts["error"] += 1
 
     return counts
 
 
-async def _ingest_paper(paper: Paper, counts: dict, batch: list[dict]) -> None:
+async def _ingest_paper(paper: Paper, counts: dict, run_publish_count: dict) -> None:
     """
     Full pipeline for a single paper.
 
     Steps:
-      1. Scimago Q-value Check — look up journal ISSN against Scimago database
-      2. Decision             — Q1/Q2 approved, rest rejected
-      3. Lazy Enrichment      — only for approved papers: fetch Crossref/S2 metadata
-      4. Publish              — add enriched paper to batch for Next.js API
+      1. PDF Resolution - resolve PDF link and download bytes (BEFORE scoring)
+      2. Scoring        - Scimago Q-value check
+      3. Decision       - approved (Q1/Q2 + DOI + has PDF bytes) -> publish | otherwise -> reject
     """
-    # Step 1: Metadata Enrichment (Lazy)
-    # Moved to after approval.
     paper_dict = paper.model_dump()
+    resolve_reason: str = "not_attempted"
 
-    # Step 2: LLM Scoring (Bypassed in favor of Scimago)
+    # Step 1: PDF Resolution — runs BEFORE scoring so that paper.pdf_url is
+    # populated by the time determine_status() checks it (doi + pdf gate).
     try:
-        scores = await compute_scores(paper_dict)
+        resolve_result = await pdf_resolver.resolve(paper)
+        resolve_reason = resolve_result.reason or "success"
+        if resolve_result.success:
+            paper.pdf_url = resolve_result.pdf_url
+            paper_dict["pdf_url"] = resolve_result.pdf_url
+            pdf_bytes: bytes | None = resolve_result.pdf_bytes
+            logger.info(
+                "PDF resolved before scoring",
+                doi=paper.doi,
+                source=resolve_result.source,
+                size_bytes=len(pdf_bytes) if pdf_bytes else 0,
+            )
+        else:
+            pdf_bytes = None
+            logger.info(
+                "PDF not resolved",
+                doi=paper.doi,
+                reason=resolve_result.reason,
+            )
+    except Exception as exc:
+        logger.warning("PDF resolution error (continuing)", doi=paper.doi, error=str(exc))
+        pdf_bytes = None
+        resolve_reason = f"exception:{exc}"
+
+    # Step 2: Scoring
+    try:
+        scores, q_value = await compute_scores(paper_dict)
     except Exception as exc:
         logger.error("Scoring failed", title=paper.title[:60], error=str(exc))
         counts["error"] += 1
         return
 
     # Step 3: Approval Decision
-    status = determine_status(scores)
-    
+    status = determine_status(scores, paper_dict)
+
     logger.info(
         "Paper scored",
         title=paper.title[:60],
         q_value=scores.scimago_q_value,
         status=status.value,
+        doi=paper.doi,
     )
 
     if status == PaperStatus.APPROVED:
@@ -179,30 +229,77 @@ async def _ingest_paper(paper: Paper, counts: dict, batch: list[dict]) -> None:
         except Exception as exc:
             logger.warning("Enrichment failed (continuing)", title=paper.title[:60], error=str(exc))
             
-        # Build the payload exactly matching the PACR backend PaperDto schema
+        # Build the payload expected by the PACR Next.js API
         approved_payload = {
-            "title": paper.title,
-            "abstract": paper.abstract or "No abstract available.",
-            "doi": paper.doi,
-            "authors": [a.name for a in paper.authors],  # backend expects list of name strings
-            "url": paper.source_url,
             "source": paper.source.value,
-            "tags": paper.keywords,
-            "dateOfPublication": paper.publication_date.isoformat() if paper.publication_date else None,
-            "journalName": paper.journal,
+            "external_id": paper.external_id,
+            "doi": paper.doi,
+            "title": paper.title,
+            "abstract": paper.abstract,
+            "authors": [a.model_dump() for a in paper.authors],
+            "publication_date": paper.publication_date.isoformat() if paper.publication_date else None,
+            "journal": paper.journal,
+            "funding_sources": getattr(paper, "funding_sources", []),
+            "keywords": paper.keywords,
+            "source_url": paper.source_url,
+            "pdf_url": paper.pdf_url,
+            "scores": scores.model_dump(),
+            "q_value": scores.scimago_q_value,
         }
-        batch.append(approved_payload)
-        counts["approved"] += 1
-        logger.info(
-            "Paper approved and added to batch",
-            title=paper.title[:60],
-            doi=paper.doi,
-            q_value=scores.scimago_q_value,
-        )
+        
+        # pdf_bytes was resolved in Step 1 before scoring; hard-reject if no PDF.
+        if pdf_bytes is None:
+            counts["rejected"] += 1
+            counts["rejected_no_pdf"] += 1
+            if resolve_reason == "no_oa_signal":
+                counts["rejected_no_oa_signal"] += 1
+            logger.info(
+                "Paper rejected — no PDF resolved (paywalled or no OA copy available)",
+                doi=paper.doi,
+                title=paper.title[:60],
+                pdf_resolve_reason=resolve_reason,
+            )
+            return
+                
+        # Send to backend
+        try:
+            logger.info("Publishing single paper with PDF...", doi=paper.doi)
+            publish_result = await pacr_client.publish_single_with_pdf(approved_payload, pdf_bytes)
+            
+            counts["approved"] += 1
+            if publish_result.get("published", 0) > 0:
+                counts["published_to_backend"] = counts.get("published_to_backend", 0) + 1
+                run_publish_count["count"] += 1  # increment global per-run cap counter
+                
+            logger.info(
+                "Paper approved and sent to backend",
+                title=paper.title[:60],
+                doi=paper.doi,
+                run_total=run_publish_count["count"],
+            )
+        except Exception as exc:
+            logger.error("Failed to publish paper to backend", doi=paper.doi, error=str(exc))
+            counts["error"] += 1
     else:
         counts["rejected"] += 1
-        logger.info(
-            "Paper rejected",
-            title=paper.title[:60],
-            q_value=scores.scimago_q_value,
-        )
+        if scores.scimago_q_value not in ("Q1", "Q2"):
+            counts["rejected_q3_q4"] += 1
+            logger.info(
+                "Paper rejected — Q-value below threshold",
+                title=paper.title[:60],
+                q_value=scores.scimago_q_value,
+                doi=paper.doi,
+            )
+        elif not paper_dict.get("doi"):
+            counts["rejected_no_doi"] += 1
+            logger.info(
+                "Paper rejected — no DOI",
+                title=paper.title[:60],
+            )
+        else:
+            logger.info(
+                "Paper rejected",
+                title=paper.title[:60],
+                q_value=scores.scimago_q_value,
+                doi=paper.doi,
+            )

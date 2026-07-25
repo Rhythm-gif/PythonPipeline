@@ -125,6 +125,15 @@ class PubMedConnector(BaseConnector):
         if not pmid:
             return None
 
+        # PMCID — present in PubmedData/ArticleIdList when the paper is in PMC
+        pmcid: Optional[str] = None
+        for aid in node.findall(".//PubmedData/ArticleIdList/ArticleId"):
+            if aid.get("IdType", "").lower() == "pmc" and aid.text:
+                raw = aid.text.strip()
+                # Normalise to "PMC1234567" format
+                pmcid = raw if raw.upper().startswith("PMC") else f"PMC{raw}"
+                break
+
         # Title
         title_node = article.find("ArticleTitle")
         title = "".join(title_node.itertext()).strip() if title_node is not None else ""
@@ -185,6 +194,7 @@ class PubMedConnector(BaseConnector):
             citation_count=0,  # enriched later via Semantic Scholar
             keywords=keywords,
             source_url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+            pmcid=pmcid,
         )
 
     @staticmethod
