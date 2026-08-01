@@ -164,6 +164,7 @@ async def _do_download(
         follow_redirects=True,
         headers=_BROWSER_HEADERS,
         timeout=httpx.Timeout(timeout),
+        http2=True,
     ) as client:
         async with client.stream("GET", url) as response:
             status       = response.status_code

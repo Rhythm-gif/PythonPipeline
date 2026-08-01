@@ -18,7 +18,8 @@ SS_BASE = "https://api.semanticscholar.org/graph/v1"
 PAPER_FIELDS = (
     "title,abstract,authors,citationCount,influentialCitationCount,"
     "year,referenceCount,fieldsOfStudy,publicationTypes,journal,"
-    "externalIds,publicationDate,authors.hIndex,authors.citationCount"
+    "externalIds,publicationDate,authors.hIndex,authors.citationCount,"
+    "openAccessPdf"
 )
 
 
@@ -95,5 +96,9 @@ class SemanticScholarConnector(BaseConnector):
         fields = data.get("fieldsOfStudy", [])
         if fields:
             result["fields_of_study"] = fields
+
+        oa_pdf = data.get("openAccessPdf")
+        if oa_pdf and isinstance(oa_pdf, dict) and oa_pdf.get("url"):
+            result["s2_pdf_url"] = oa_pdf.get("url")
 
         return result

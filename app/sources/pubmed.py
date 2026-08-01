@@ -57,7 +57,7 @@ class PubMedConnector(BaseConnector):
     async def _search(self, min_date: str, max_date: str, limit: int) -> list[str]:
         params = {
             "db": "pubmed",
-            "term": f"has abstract[text] AND {min_date}:{max_date}[dp]",
+            "term": f"has abstract[text] AND free full text[sb] AND {min_date}:{max_date}[dp]",
             "retmax": min(limit, 10000),
             "retmode": "json",
             "sort": "pub date",

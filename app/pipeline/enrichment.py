@@ -44,14 +44,8 @@ async def enrich_paper(paper_doc: dict) -> dict:
                     updates.update(enriched)
                     logger.debug("DataCite enrichment", doi=doi, fields=list(enriched.keys()))
 
-    # ── Semantic Scholar Enrichment (only if API key present) ─────────────────
-    s2_api_key = get_settings().semantic_scholar_api_key.strip()
-    if not s2_api_key:
-        logger.debug(
-            "Skipping Semantic Scholar enrichment — no API key configured. "
-            "Set SEMANTIC_SCHOLAR_API_KEY in .env to enable enrichment."
-        )
-        return updates
+    # Semantic Scholar Enrichment (works without API key, just slower rate limit)
+    s2_api_key = get_settings().semantic_scholar_api_key
 
     async with SemanticScholarConnector() as s2:
         s2_data = None

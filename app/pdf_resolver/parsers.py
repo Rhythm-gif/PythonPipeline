@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 
 # Regex to detect PDF-related anchor text or href fragments
 _PDF_LINK_RE = re.compile(
-    r"(\.pdf$|[/_-]pdf[/_-]?|/download[/_]|full[._-]?text|full[._-]?article)",
+    r"(\.pdf(?:\?.*)?$|\.pdf\"|\.pdf'|[/_-]pdf[/_-]?|/download[/_]?|full[._-]?text|full[._-]?article)",
     re.IGNORECASE,
 )
 

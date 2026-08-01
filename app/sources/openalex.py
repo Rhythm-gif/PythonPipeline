@@ -28,7 +28,10 @@ class OpenAlexConnector(BaseConnector):
         per_page = min(limit, 200)
         fetched = 0
 
-        filter_parts = ["has_abstract:true", "type:article"]
+        # Use oa_status:gold and has_issn:true instead of is_oa:true to ensure we only get papers
+        # from fully Open Access journals (which have Q-rankings and direct PDFs)
+        # rather than random repositories like Zenodo which are unranked.
+        filter_parts = ["has_abstract:true", "type:article", "open_access.oa_status:gold", "primary_location.source.has_issn:true"]
         if since:
             filter_parts.append(f"from_publication_date:{since.date().isoformat()}")
 
@@ -43,7 +46,7 @@ class OpenAlexConnector(BaseConnector):
                 "select": (
                     "id,doi,title,abstract_inverted_index,authorships,"
                     "publication_date,primary_location,best_oa_location,"
-                    "locations,cited_by_count,keywords,concepts,type,open_access,grants"
+                    "locations,cited_by_count,keywords,concepts,type,open_access,funders"
                 ),
             }
 
@@ -127,10 +130,10 @@ class OpenAlexConnector(BaseConnector):
 
             # Funding Sources
             funding_sources = []
-            for grant in work.get("grants", []) or []:
-                funder = grant.get("funder_display_name")
-                if funder and funder not in funding_sources:
-                    funding_sources.append(funder)
+            for funder in work.get("funders", []) or []:
+                funder_name = funder.get("display_name")
+                if funder_name and funder_name not in funding_sources:
+                    funding_sources.append(funder_name)
                     
             # PDF URL — kept for backward compatibility with scoring gate
             pdf_url = None
