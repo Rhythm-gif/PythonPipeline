@@ -41,7 +41,6 @@ class PyObjectId(str):
 class PaperSource(str, Enum):
     OPENALEX = "openalex"
     PUBMED = "pubmed"
-    ARXIV = "arxiv"
     CROSSREF = "crossref"
     SEMANTIC_SCHOLAR = "semantic_scholar"
 

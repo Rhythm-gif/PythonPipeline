@@ -113,32 +113,30 @@ async def _process_source(connector, limit: int, run_publish_count: dict) -> dic
     start = datetime.utcnow()
 
     try:
-        fetched_papers = []
         async with connector:
-            async for paper in connector.fetch_latest(since=since, limit=limit):
-                fetched_papers.append(paper)
+            # We fetch up to a large number (e.g., 500) to ensure we don't run out
+            # of candidates before we hit our MAX_PUBLISH_PER_RUN cap.
+            async for paper in connector.fetch_latest(since=since, limit=500):
+                # Stop fetching and processing once the per-run cap is hit
+                if run_publish_count["count"] >= MAX_PUBLISH_PER_RUN:
+                    logger.info(
+                        "Run publish cap reached — stopping paper ingestion for this source",
+                        cap=MAX_PUBLISH_PER_RUN,
+                        source=source.value,
+                    )
+                    break
+
                 counts["fetched"] += 1
-
-        for paper in fetched_papers:
-            # Stop processing more papers once the per-run cap is hit
-            if run_publish_count["count"] >= MAX_PUBLISH_PER_RUN:
-                logger.info(
-                    "Run publish cap reached — stopping paper ingestion for this source",
-                    cap=MAX_PUBLISH_PER_RUN,
-                    source=source.value,
-                )
-                break
-
-            try:
-                await _ingest_paper(paper, counts, run_publish_count)
-            except Exception as exc:
-                logger.error(
-                    "Paper ingestion error",
-                    doi=paper.doi,
-                    title=paper.title[:60],
-                    error=str(exc),
-                )
-                counts["error"] += 1
+                try:
+                    await _ingest_paper(paper, counts, run_publish_count)
+                except Exception as exc:
+                    logger.error(
+                        "Paper ingestion error",
+                        doi=paper.doi,
+                        title=paper.title[:60],
+                        error=str(exc),
+                    )
+                    counts["error"] += 1
 
         logger.info(f"Total number of papers approved: {counts['approved']}")
         logger.info(f"Total posts created: {counts['published_to_backend']}")
@@ -247,18 +245,11 @@ async def _ingest_paper(paper: Paper, counts: dict, run_publish_count: dict) -> 
             "q_value": scores.scimago_q_value,
         }
         
-        # pdf_bytes was resolved in Step 1 before scoring; hard-reject if no PDF.
+        # ── STRICT PDF REQUIREMENT ──
+        # We only publish Q1/Q2 papers if they have a valid PDF downloaded.
         if pdf_bytes is None:
-            counts["rejected"] += 1
+            logger.info("Paper rejected — missing PDF bytes", doi=paper.doi)
             counts["rejected_no_pdf"] += 1
-            if resolve_reason == "no_oa_signal":
-                counts["rejected_no_oa_signal"] += 1
-            logger.info(
-                "Paper rejected — no PDF resolved (paywalled or no OA copy available)",
-                doi=paper.doi,
-                title=paper.title[:60],
-                pdf_resolve_reason=resolve_reason,
-            )
             return
                 
         # Send to backend
