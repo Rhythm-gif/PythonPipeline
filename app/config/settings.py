@@ -36,7 +36,7 @@ class Settings(BaseSettings):
 
     # ── Scheduler ─────────────────────────────────────────────
     cron_expression: str = "0 0 * * *"
-    papers_per_source: int = Field(default=50, ge=1, le=500)
+    papers_per_source: int = Field(default=100, ge=1, le=500)
 
     # ── API Server ────────────────────────────────────────────
     api_host: str = "0.0.0.0"
