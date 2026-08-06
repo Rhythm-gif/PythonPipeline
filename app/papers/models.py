@@ -8,32 +8,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
-from bson import ObjectId
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-class PyObjectId(str):
-    """
-    Custom Pydantic-compatible ObjectId type for MongoDB.
-    Compatible with Pydantic v2.
-    """
-    @classmethod
-    def __get_pydantic_core_schema__(cls, source_type, handler):
-        from pydantic_core import core_schema
-        return core_schema.no_info_plain_validator_function(
-            cls.validate,
-            serialization=core_schema.to_string_ser_schema(),
-        )
-
-    @classmethod
-    def validate(cls, v):
-        if isinstance(v, ObjectId):
-            return str(v)
-        if ObjectId.is_valid(str(v)):
-            return str(v)
-        raise ValueError(f"Invalid ObjectId: {v}")
 
 
 # ── Enums ──────────────────────────────────────────────────────────────────────
