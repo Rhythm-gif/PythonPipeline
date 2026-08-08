@@ -265,8 +265,6 @@ async def _do_download(
 
             except ValueError as e:
                 if str(e) == "exceeded_max_size":
-                    if tmp_path and os.path.exists(tmp_path):
-                        os.remove(tmp_path)
                     return DownloadResult(
                         success=False,
                         status_code=status,
@@ -277,8 +275,6 @@ async def _do_download(
                 raise
             except Exception as exc:
                 logger.error("Failed to download or upload to S3", url=url, error=str(exc))
-                if tmp_path and os.path.exists(tmp_path):
-                    os.remove(tmp_path)
                 return DownloadResult(
                     success=False,
                     status_code=status,
@@ -286,10 +282,13 @@ async def _do_download(
                     redirects=redirects,
                     failure_reason="s3_upload_failed",
                 )
-            
-            # CRITICAL STEP: Clean up the temporary file instantly
-            if tmp_path and os.path.exists(tmp_path):
-                os.remove(tmp_path)
+            finally:
+                # CRITICAL STEP: Guaranteed cleanup even on Server Shutdown/CancelledError
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception as cleanup_exc:
+                        logger.warning("Failed to remove temp file", tmp_path=tmp_path, error=str(cleanup_exc))
 
             logger.debug(
                 "PDF download and presigned S3 upload complete",

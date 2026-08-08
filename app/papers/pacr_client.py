@@ -69,13 +69,9 @@ class PacrClient:
                 if paper_dict.get("source_url"):
                     paper_dict["url"] = paper_dict["source_url"]
 
-                # Always multipart — backend expects a consistent format
-                files: dict = {
-                    "metadata": (None, json.dumps(paper_dict), "application/json"),
-                }
-
+                # Send as pure JSON (application/json) since Multer was removed on the backend
                 resp = await client.post(
-                    url, files=files, headers=self._auth_headers()
+                    url, json=paper_dict, headers=self._auth_headers()
                 )
                 resp.raise_for_status()
                 return resp.json()
