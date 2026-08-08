@@ -22,10 +22,13 @@ from typing import Optional
 
 import httpx
 
+import os
+import tempfile
+
 from app.common.logging import get_logger
 from app.pdf_resolver.rate_limiter import DomainRateLimiter
 from app.pdf_resolver.validators import has_pdf_magic_bytes, is_html_content_type
-from app.common.s3_service import s3_service
+from app.papers.pacr_client import pacr_client
 
 logger = get_logger(__name__)
 
@@ -230,22 +233,40 @@ async def _do_download(
                     failure_reason="magic_bytes_invalid",
                 )
 
-            # We have a valid PDF. Now create a generator to stream to S3
-            async def s3_chunk_generator():
-                yield first_chunk
-                total = len(first_chunk)
-                async for chunk in response.aiter_bytes(chunk_size=_CHUNK_SIZE):
-                    total += len(chunk)
-                    if total > max_bytes:
-                        logger.warning("PDF exceeds max size limit during stream", url=url, max_bytes=max_bytes)
-                        raise ValueError("exceeded_max_size")
-                    yield chunk
-            
+            # We have a valid PDF. Now save it to a temporary file securely
+            tmp_path = None
             try:
-                # Stream directly to S3 without accumulating in RAM
-                s3_key = await s3_service.upload_stream(s3_chunk_generator(), content_type="application/pdf")
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                    tmp_path = tmp_file.name
+                    tmp_file.write(first_chunk)
+                    total = len(first_chunk)
+                    async for chunk in response.aiter_bytes(chunk_size=_CHUNK_SIZE):
+                        total += len(chunk)
+                        if total > max_bytes:
+                            logger.warning("PDF exceeds max size limit", url=url, max_bytes=max_bytes)
+                            raise ValueError("exceeded_max_size")
+                        tmp_file.write(chunk)
+                
+                # Request presigned URL from backend
+                identifier = url.split('/')[-1] or "document.pdf"
+                presigned = await pacr_client.get_presigned_upload_url(identifier)
+                upload_url = presigned["uploadUrl"]
+                s3_key = presigned["fileKey"]
+
+                # Upload to S3 directly via HTTP PUT
+                async with httpx.AsyncClient(timeout=60) as upload_client:
+                    with open(tmp_path, "rb") as f:
+                        upload_resp = await upload_client.put(
+                            upload_url,
+                            content=f,
+                            headers={"Content-Type": "application/pdf"}
+                        )
+                        upload_resp.raise_for_status()
+
             except ValueError as e:
                 if str(e) == "exceeded_max_size":
+                    if tmp_path and os.path.exists(tmp_path):
+                        os.remove(tmp_path)
                     return DownloadResult(
                         success=False,
                         status_code=status,
@@ -255,7 +276,9 @@ async def _do_download(
                     )
                 raise
             except Exception as exc:
-                logger.error("Failed to stream to S3", url=url, error=str(exc))
+                logger.error("Failed to download or upload to S3", url=url, error=str(exc))
+                if tmp_path and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
                 return DownloadResult(
                     success=False,
                     status_code=status,
@@ -263,9 +286,13 @@ async def _do_download(
                     redirects=redirects,
                     failure_reason="s3_upload_failed",
                 )
+            
+            # CRITICAL STEP: Clean up the temporary file instantly
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
             logger.debug(
-                "PDF download and stream to S3 complete",
+                "PDF download and presigned S3 upload complete",
                 url=url,
                 s3_key=s3_key,
                 redirects=redirects,

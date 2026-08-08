@@ -25,6 +25,29 @@ class PacrClient:
         """Return auth-only headers (no Content-Type — let httpx set it for multipart)."""
         return {"Authorization": f"Bearer {self.api_key}"}
 
+    async def get_presigned_upload_url(self, identifier: str) -> dict:
+        """
+        Request a presigned S3 upload URL from the Node.js backend.
+        Returns: {"uploadUrl": "https://...", "fileKey": "..."}
+        """
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                url = f"{self.base_url}/api/internal/generate-upload-url"
+                resp = await client.post(
+                    url,
+                    json={"identifier": identifier},
+                    headers=self._auth_headers()
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as exc:
+            logger.error(
+                "Failed to request presigned upload URL from backend",
+                identifier=identifier,
+                error=str(exc),
+            )
+            raise
+
     async def publish_single_with_pdf(
         self, paper_dict: dict
     ) -> dict:

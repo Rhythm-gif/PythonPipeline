@@ -28,13 +28,6 @@ class Settings(BaseSettings):
     # Leave empty to skip Unpaywall lookups entirely.
     unpaywall_email: str = ""
 
-    # ── AWS S3 ────────────────────────────────────────────────
-    aws_s3_endpoint: str = ""
-    aws_s3_bucket: str = ""
-    aws_access_key_id: str = ""
-    aws_secret_access_key: str = ""
-    aws_region: str = ""
-
     # ── PDF Resolver ──────────────────────────────────────────
     # Maximum PDF download size in megabytes (default: 50 MB)
     pdf_max_size_mb: int = Field(default=50, ge=1, le=500)
