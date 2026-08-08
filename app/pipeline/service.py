@@ -244,6 +244,7 @@ async def _ingest_paper(paper: Paper, counts: dict, run_publish_count: dict) -> 
         if s3_key is None:
             logger.info("Paper rejected — missing PDF (S3 Key)", doi=paper.doi)
             counts["rejected_no_pdf"] += 1
+            counts["rejected"] += 1
             return
                 
         # Send to backend
