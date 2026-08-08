@@ -26,16 +26,15 @@ class PacrClient:
         return {"Authorization": f"Bearer {self.api_key}"}
 
     async def publish_single_with_pdf(
-        self, paper_dict: dict, pdf_bytes: Optional[bytes] = None
+        self, paper_dict: dict
     ) -> dict:
         """
         Publish a single approved paper to the Next.js backend.
 
         Sends a multipart/form-data request with:
-          - metadata: stringified JSON of the paper details
-          - pdf:      (optional) raw PDF binary
+          - metadata: stringified JSON of the paper details (including s3_key)
 
-        The backend handles deduplication and S3 upload automatically.
+        The backend handles deduplication and attaches the S3 file automatically.
         Returns {"success": true, "published": 1} for new papers,
                 {"success": true, "published": 0} for duplicates.
         """
@@ -51,8 +50,6 @@ class PacrClient:
                 files: dict = {
                     "metadata": (None, json.dumps(paper_dict), "application/json"),
                 }
-                if pdf_bytes:
-                    files["pdf"] = ("paper.pdf", pdf_bytes, "application/pdf")
 
                 resp = await client.post(
                     url, files=files, headers=self._auth_headers()

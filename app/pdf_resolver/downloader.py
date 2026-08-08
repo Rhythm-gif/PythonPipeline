@@ -25,6 +25,7 @@ import httpx
 from app.common.logging import get_logger
 from app.pdf_resolver.rate_limiter import DomainRateLimiter
 from app.pdf_resolver.validators import has_pdf_magic_bytes, is_html_content_type
+from app.common.s3_service import s3_service
 
 logger = get_logger(__name__)
 
@@ -60,7 +61,7 @@ _CHUNK_SIZE  = 8_192   # bytes per streaming chunk
 class DownloadResult:
     """Result of a single candidate download attempt."""
     success: bool
-    pdf_bytes: Optional[bytes] = None
+    s3_key: Optional[str] = None
     content_type: str = ""
     status_code: int = 0
     redirects: int = 0
@@ -203,47 +204,10 @@ async def _do_download(
                 )
 
             # ── Stream and validate PDF ───────────────────────────────────
-            chunks: list[bytes] = []
-            total          = 0
-            magic_verified = False
-            first_chunk    = True
-
-            async for chunk in response.aiter_bytes(chunk_size=_CHUNK_SIZE):
-                if first_chunk:
-                    first_chunk = False
-                    if not has_pdf_magic_bytes(chunk):
-                        logger.debug(
-                            "Magic bytes invalid",
-                            url=url,
-                            first_bytes=chunk[:8].hex(),
-                        )
-                        return DownloadResult(
-                            success=False,
-                            status_code=status,
-                            content_type=content_type,
-                            redirects=redirects,
-                            failure_reason="magic_bytes_invalid",
-                        )
-                    magic_verified = True
-
-                chunks.append(chunk)
-                total += len(chunk)
-
-                if total > max_bytes:
-                    logger.warning(
-                        "PDF exceeds max size limit",
-                        url=url,
-                        max_bytes=max_bytes,
-                    )
-                    return DownloadResult(
-                        success=False,
-                        status_code=status,
-                        content_type=content_type,
-                        redirects=redirects,
-                        failure_reason=f"exceeded_max_size",
-                    )
-
-            if not magic_verified:
+            # Read just the first chunk to validate magic bytes
+            try:
+                first_chunk = await response.aiter_bytes(chunk_size=_CHUNK_SIZE).__anext__()
+            except StopAsyncIteration:
                 return DownloadResult(
                     success=False,
                     status_code=status,
@@ -251,17 +215,64 @@ async def _do_download(
                     redirects=redirects,
                     failure_reason="empty_response",
                 )
+            
+            if not has_pdf_magic_bytes(first_chunk):
+                logger.debug(
+                    "Magic bytes invalid",
+                    url=url,
+                    first_bytes=first_chunk[:8].hex(),
+                )
+                return DownloadResult(
+                    success=False,
+                    status_code=status,
+                    content_type=content_type,
+                    redirects=redirects,
+                    failure_reason="magic_bytes_invalid",
+                )
 
-            pdf_bytes = b"".join(chunks)
+            # We have a valid PDF. Now create a generator to stream to S3
+            async def s3_chunk_generator():
+                yield first_chunk
+                total = len(first_chunk)
+                async for chunk in response.aiter_bytes(chunk_size=_CHUNK_SIZE):
+                    total += len(chunk)
+                    if total > max_bytes:
+                        logger.warning("PDF exceeds max size limit during stream", url=url, max_bytes=max_bytes)
+                        raise ValueError("exceeded_max_size")
+                    yield chunk
+            
+            try:
+                # Stream directly to S3 without accumulating in RAM
+                s3_key = await s3_service.upload_stream(s3_chunk_generator(), content_type="application/pdf")
+            except ValueError as e:
+                if str(e) == "exceeded_max_size":
+                    return DownloadResult(
+                        success=False,
+                        status_code=status,
+                        content_type=content_type,
+                        redirects=redirects,
+                        failure_reason="exceeded_max_size",
+                    )
+                raise
+            except Exception as exc:
+                logger.error("Failed to stream to S3", url=url, error=str(exc))
+                return DownloadResult(
+                    success=False,
+                    status_code=status,
+                    content_type=content_type,
+                    redirects=redirects,
+                    failure_reason="s3_upload_failed",
+                )
+
             logger.debug(
-                "PDF download complete",
+                "PDF download and stream to S3 complete",
                 url=url,
-                size_bytes=len(pdf_bytes),
+                s3_key=s3_key,
                 redirects=redirects,
             )
             return DownloadResult(
                 success=True,
-                pdf_bytes=pdf_bytes,
+                s3_key=s3_key,
                 content_type=content_type,
                 status_code=status,
                 redirects=redirects,

@@ -19,7 +19,7 @@ def _normalize_issn(issn: str) -> str:
 
 def load_scimago_data():
     """Load Scimago CSV into memory."""
-    global _IS_LOADED, _SCIMAGO_DATA
+    global _IS_LOADED
     if _IS_LOADED:
         return
 

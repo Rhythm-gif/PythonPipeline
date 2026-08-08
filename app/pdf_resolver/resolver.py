@@ -30,7 +30,7 @@ logger = get_logger(__name__)
 class ResolverResult:
     """Structured return value from PdfResolver.resolve()."""
     success: bool
-    pdf_bytes: Optional[bytes] = None
+    s3_key: Optional[str] = None
     pdf_url: Optional[str] = None
     source: Optional[str] = None
     validation: Optional[dict] = None
@@ -83,7 +83,7 @@ class PdfResolver:
                    - paper.raw_metadata.get("primary_landing_page_url")
 
         Returns:
-            ResolverResult with success=True and pdf_bytes set on success,
+            ResolverResult with success=True and s3_key set on success,
             or success=False with a human-readable reason on failure.
         """
         cache_key = paper.doi or f"{paper.source.value}:{paper.external_id}"
@@ -158,18 +158,16 @@ class PdfResolver:
                         "status_code": dl.status_code,
                     })
 
-                # ── SUCCESS ───────────────────────────────────────────────
-                if dl.success and dl.pdf_bytes:
+                # ── SUCCESS — 4d. Found PDF! Cache and return. ────────────────────
+                if dl.success and dl.s3_key:
                     logger.info(
-                        "PDF resolved successfully",
+                        "Resolved PDF successfully",
                         doi=paper.doi,
-                        winning_source=candidate.source,
-                        winning_url=candidate.url,
-                        size_bytes=len(dl.pdf_bytes),
+                        source=candidate.source,
                     )
                     result = ResolverResult(
                         success=True,
-                        pdf_bytes=dl.pdf_bytes,
+                        s3_key=dl.s3_key,
                         pdf_url=candidate.url,
                         source=candidate.source,
                         validation={
@@ -227,5 +225,6 @@ def _to_cacheable(result: ResolverResult) -> dict:
         "source":     result.source,
         "validation": result.validation,
         "reason":     result.reason,
-        # pdf_bytes intentionally excluded
+        # s3_key intentionally excluded
+        # to prevent caching large values (if we were caching bytes) or S3 keys that might expire
     }

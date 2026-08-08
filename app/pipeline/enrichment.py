@@ -23,8 +23,6 @@ async def enrich_paper(paper_doc: dict) -> dict:
     """
     updates: dict = {}
     doi = paper_doc.get("doi")
-    external_id = paper_doc.get("external_id", "")
-    source = paper_doc.get("source", "")
 
     # ── Crossref / DataCite Enrichment ────────────────────────────────────────
     if doi:

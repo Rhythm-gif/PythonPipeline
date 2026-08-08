@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
-import asyncio
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger

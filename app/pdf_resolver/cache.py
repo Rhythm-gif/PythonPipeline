@@ -61,8 +61,8 @@ class InMemoryPdfCache(AbstractPdfCache):
             return value
 
     async def set(self, key: str, value: dict) -> None:
-        # Strip pdf_bytes before storing — never cache raw binary blobs
-        storable = {k: v for k, v in value.items() if k != "pdf_bytes"}
+        # Strip s3_key before storing - never cache S3 keys to avoid returning expired/stale URLs
+        storable = {k: v for k, v in value.items() if k != "s3_key"}
         async with self._lock:
             self._store[key] = (storable, time.monotonic() + self._ttl)
 

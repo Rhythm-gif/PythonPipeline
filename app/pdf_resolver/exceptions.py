@@ -14,22 +14,3 @@ class NoCandidatesError(PdfResolverError):
     Resolution is skipped entirely — no network requests are made.
     """
 
-
-class AllCandidatesFailedError(PdfResolverError):
-    """
-    Raised when every candidate URL has been tried and none
-    yielded a valid PDF.
-    """
-
-
-class PdfValidationError(PdfResolverError):
-    """
-    Raised when content was received but the magic bytes do not
-    match a valid PDF (%PDF header).
-    """
-
-
-class PdfDownloadError(PdfResolverError):
-    """
-    Raised on a network or HTTP-level failure during download.
-    """

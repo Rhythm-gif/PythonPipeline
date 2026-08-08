@@ -78,44 +78,6 @@ class Paper(BaseModel):
         return str(v).strip() if v else ""
 
 
-# ── Stored Paper (MongoDB document) ───────────────────────────────────────────
-
-class PaperRecord(BaseModel):
-    id: Optional[str] = Field(default=None, alias="_id")
-    source: PaperSource
-    external_id: str
-    doi: Optional[str] = None
-    title: str
-    abstract: Optional[str] = None
-    authors: list[Author] = []
-    publication_date: Optional[datetime] = None
-    journal: Optional[str] = None
-    issn: Optional[str] = None
-    citation_count: int = 0
-    funding_sources: list[str] = []
-    keywords: list[str] = []
-    source_url: Optional[str] = None
-    pdf_url: Optional[str] = None
-    pmcid: Optional[str] = None
-    scimago_q_value: Optional[str] = None
-
-    # Scoring
-    scores: PaperScore = Field(default_factory=PaperScore)
-    status: PaperStatus = PaperStatus.REJECTED
-
-    # Housekeeping
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    last_enriched_at: Optional[datetime] = None
-
-    model_config = {"populate_by_name": True}
-
-    def to_mongo(self) -> dict:
-        data = self.model_dump(by_alias=True, exclude_none=False)
-        if data.get("_id") is None:
-            data.pop("_id", None)
-        return data
-
 
 # ── Sync State ─────────────────────────────────────────────────────────────────
 

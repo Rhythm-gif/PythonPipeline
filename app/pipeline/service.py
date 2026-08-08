@@ -144,7 +144,7 @@ async def _process_source(connector, limit: int, run_publish_count: dict) -> dic
             "Rejection breakdown for this source",
             rejected_q3_q4=counts["rejected_q3_q4"],
             rejected_no_doi=counts["rejected_no_doi"],
-            rejected_no_pdf_bytes=counts["rejected_no_pdf"],
+            rejected_no_pdf=counts["rejected_no_pdf"],
             rejected_no_oa_signal=counts["rejected_no_oa_signal"],
         )
 
@@ -162,41 +162,14 @@ async def _ingest_paper(paper: Paper, counts: dict, run_publish_count: dict) -> 
     Full pipeline for a single paper.
 
     Steps:
-      1. PDF Resolution - resolve PDF link and download bytes (BEFORE scoring)
-      2. Scoring        - Scimago Q-value check
-      3. Decision       - approved (Q1/Q2 + DOI + has PDF bytes) -> publish | otherwise -> reject
+      1. Scoring        - Scimago Q-value check
+      2. Decision       - approved (Q1/Q2 + DOI) -> Proceed | otherwise -> reject
+      3. PDF Resolution - resolve PDF link and stream to S3
+      4. Publish        - publish to backend if S3 stream succeeded
     """
     paper_dict = paper.model_dump()
-    resolve_reason: str = "not_attempted"
 
-    # Step 1: PDF Resolution — runs BEFORE scoring so that paper.pdf_url is
-    # populated by the time determine_status() checks it (doi + pdf gate).
-    try:
-        resolve_result = await pdf_resolver.resolve(paper)
-        resolve_reason = resolve_result.reason or "success"
-        if resolve_result.success:
-            paper.pdf_url = resolve_result.pdf_url
-            paper_dict["pdf_url"] = resolve_result.pdf_url
-            pdf_bytes: bytes | None = resolve_result.pdf_bytes
-            logger.info(
-                "PDF resolved before scoring",
-                doi=paper.doi,
-                source=resolve_result.source,
-                size_bytes=len(pdf_bytes) if pdf_bytes else 0,
-            )
-        else:
-            pdf_bytes = None
-            logger.info(
-                "PDF not resolved",
-                doi=paper.doi,
-                reason=resolve_result.reason,
-            )
-    except Exception as exc:
-        logger.warning("PDF resolution error (continuing)", doi=paper.doi, error=str(exc))
-        pdf_bytes = None
-        resolve_reason = f"exception:{exc}"
-
-    # Step 2: Scoring
+    # Step 1: Scoring
     try:
         scores, q_value = await compute_scores(paper_dict)
     except Exception as exc:
@@ -204,7 +177,7 @@ async def _ingest_paper(paper: Paper, counts: dict, run_publish_count: dict) -> 
         counts["error"] += 1
         return
 
-    # Step 3: Approval Decision
+    # Step 2: Approval Decision
     status = determine_status(scores, paper_dict)
 
     logger.info(
@@ -216,6 +189,27 @@ async def _ingest_paper(paper: Paper, counts: dict, run_publish_count: dict) -> 
     )
 
     if status == PaperStatus.APPROVED:
+        # Step 3: PDF Resolution & S3 Stream (Only for approved papers to save S3 costs)
+        try:
+            resolve_result = await pdf_resolver.resolve(paper)
+            resolve_reason = resolve_result.reason or "success"
+            if resolve_result.success:
+                paper.pdf_url = resolve_result.pdf_url
+                paper_dict["pdf_url"] = resolve_result.pdf_url
+                s3_key: str | None = resolve_result.s3_key
+                logger.info(
+                    "PDF resolved and streamed to S3",
+                    doi=paper.doi,
+                    source=resolve_result.source,
+                    s3_key=s3_key,
+                )
+            else:
+                s3_key = None
+                logger.info("PDF not resolved", doi=paper.doi, reason=resolve_result.reason)
+        except Exception as exc:
+            logger.warning("PDF resolution error (continuing)", doi=paper.doi, error=str(exc))
+            s3_key = None
+
         # Step 4: Lazy Enrichment (only for approved papers)
         try:
             enriched = await enrich_paper(paper_dict)
@@ -241,21 +235,22 @@ async def _ingest_paper(paper: Paper, counts: dict, run_publish_count: dict) -> 
             "keywords": paper.keywords,
             "source_url": paper.source_url,
             "pdf_url": paper.pdf_url,
+            "s3_key": s3_key,
             "scores": scores.model_dump(),
             "q_value": scores.scimago_q_value,
         }
         
         # ── STRICT PDF REQUIREMENT ──
-        # We only publish Q1/Q2 papers if they have a valid PDF downloaded.
-        if pdf_bytes is None:
-            logger.info("Paper rejected — missing PDF bytes", doi=paper.doi)
+        # We only publish Q1/Q2 papers if they have a valid PDF streamed to S3.
+        if s3_key is None:
+            logger.info("Paper rejected — missing PDF (S3 Key)", doi=paper.doi)
             counts["rejected_no_pdf"] += 1
             return
                 
         # Send to backend
         try:
-            logger.info("Publishing single paper with PDF...", doi=paper.doi)
-            publish_result = await pacr_client.publish_single_with_pdf(approved_payload, pdf_bytes)
+            logger.info("Publishing single paper with S3 Key...", doi=paper.doi)
+            publish_result = await pacr_client.publish_single_with_pdf(approved_payload)
             
             counts["approved"] += 1
             if publish_result.get("published", 0) > 0:
