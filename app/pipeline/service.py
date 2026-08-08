@@ -36,7 +36,6 @@ async def run_pipeline() -> dict:
     Returns a summary dict with counts.
     """
     settings = get_settings()
-    limit = settings.papers_per_source
     start = datetime.utcnow()
 
     summary = {
@@ -55,7 +54,7 @@ async def run_pipeline() -> dict:
         (PaperSource.PUBMED, PubMedConnector()),
     ]
 
-    logger.info("Pipeline started", limit_per_source=limit, max_publish_per_run=MAX_PUBLISH_PER_RUN)
+    logger.info("Pipeline started", limit_per_source=100, max_publish_per_run=MAX_PUBLISH_PER_RUN)
 
     # Shared mutable counter — passed into each source so the cap is global across all sources
     run_publish_count = {"count": 0}
@@ -70,7 +69,7 @@ async def run_pipeline() -> dict:
             break
 
         logger.info("Pipeline: starting source", source=source.value)
-        result = await _process_source(connector, limit, run_publish_count)
+        result = await _process_source(connector, 100, run_publish_count)
 
         summary["sources"][source.value] = result
         summary["total_fetched"] += result.get("fetched", 0)
@@ -116,7 +115,7 @@ async def _process_source(connector, limit: int, run_publish_count: dict) -> dic
         async with connector:
             # We fetch up to a large number (e.g., 500) to ensure we don't run out
             # of candidates before we hit our MAX_PUBLISH_PER_RUN cap.
-            async for paper in connector.fetch_latest(since=since, limit=500):
+            async for paper in connector.fetch_latest(since=since, limit=100):
                 # Stop fetching and processing once the per-run cap is hit
                 if run_publish_count["count"] >= MAX_PUBLISH_PER_RUN:
                     logger.info(
