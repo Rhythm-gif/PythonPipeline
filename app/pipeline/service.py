@@ -35,7 +35,7 @@ async def run_pipeline() -> dict:
     Stops publishing once MAX_PUBLISH_PER_RUN papers are sent in this run.
     Returns a summary dict with counts.
     """
-    settings = get_settings()
+    get_settings()
     start = datetime.utcnow()
 
     summary = {
@@ -191,7 +191,6 @@ async def _ingest_paper(paper: Paper, counts: dict, run_publish_count: dict) -> 
         # Step 3: PDF Resolution & S3 Stream (Only for approved papers to save S3 costs)
         try:
             resolve_result = await pdf_resolver.resolve(paper)
-            resolve_reason = resolve_result.reason or "success"
             if resolve_result.success:
                 paper.pdf_url = resolve_result.pdf_url
                 paper_dict["pdf_url"] = resolve_result.pdf_url

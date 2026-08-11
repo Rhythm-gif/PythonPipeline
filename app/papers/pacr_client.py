@@ -4,8 +4,6 @@ Handles communication with the PACR backend to verify and publish papers.
 """
 from __future__ import annotations
 
-import json
-from typing import Optional
 
 import httpx
 
