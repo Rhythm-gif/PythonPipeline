@@ -226,7 +226,7 @@ async def _ingest_paper(paper: Paper, counts: dict, run_publish_count: dict) -> 
             "doi": paper.doi,
             "title": paper.title,
             "abstract": paper.abstract,
-            "authors": [a.model_dump() for a in paper.authors],
+            "authors": [a.name for a in paper.authors],
             "publication_date": paper.publication_date.isoformat() if paper.publication_date else None,
             "journal": paper.journal,
             "funding_sources": getattr(paper, "funding_sources", []),
