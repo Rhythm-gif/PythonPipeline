@@ -209,7 +209,8 @@ async def _do_download(
             # ── Stream and validate PDF ───────────────────────────────────
             # Read just the first chunk to validate magic bytes
             try:
-                first_chunk = await response.aiter_bytes(chunk_size=_CHUNK_SIZE).__anext__()
+                chunk_iterator = response.aiter_bytes(chunk_size=_CHUNK_SIZE)
+                first_chunk = await chunk_iterator.__anext__()
             except StopAsyncIteration:
                 return DownloadResult(
                     success=False,
@@ -240,7 +241,7 @@ async def _do_download(
                     tmp_path = tmp_file.name
                     tmp_file.write(first_chunk)
                     total = len(first_chunk)
-                    async for chunk in response.aiter_bytes(chunk_size=_CHUNK_SIZE):
+                    async for chunk in chunk_iterator:
                         total += len(chunk)
                         if total > max_bytes:
                             logger.warning("PDF exceeds max size limit", url=url, max_bytes=max_bytes)
