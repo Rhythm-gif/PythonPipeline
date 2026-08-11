@@ -55,6 +55,11 @@ def create_app() -> FastAPI:
     # ── Routers ────────────────────────────────────────────────────────────────
     app.include_router(pipeline_router)
 
+    @app.get("/", tags=["Health"])
+    async def root():
+        """Root health check endpoint for uptime monitors."""
+        return {"status": "ok", "service": "PACR Python Pipeline"}
+
     return app
 
 

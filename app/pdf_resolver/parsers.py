@@ -22,6 +22,16 @@ _PDF_LINK_RE = re.compile(
     re.IGNORECASE,
 )
 
+_IGNORED_EXTENSIONS = (
+    ".exe", ".dmg", ".pkg", ".deb", ".rpm", ".tar", ".gz", ".zip", ".rar",
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".css", ".js", ".json", ".xml"
+)
+
+def _has_ignored_extension(url: str) -> bool:
+    url_lower = url.split("?")[0].lower()
+    return any(url_lower.endswith(ext) for ext in _IGNORED_EXTENSIONS)
+
+
 
 def extract_pdf_urls_from_html(html: str, base_url: str = "") -> list[str]:
     """
@@ -53,7 +63,7 @@ def extract_pdf_urls_from_html(html: str, base_url: str = "") -> list[str]:
 
     def _add(raw_url: str) -> None:
         resolved = _resolve_url(raw_url, base_url)
-        if resolved and resolved not in seen:
+        if resolved and resolved not in seen and not _has_ignored_extension(resolved):
             seen.add(resolved)
             candidates.append(resolved)
 
