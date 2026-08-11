@@ -60,6 +60,23 @@ _MAX_RETRIES = 3
 _CHUNK_SIZE  = 8_192   # bytes per streaming chunk
 
 
+async def _stream_file_async(path: str, chunk_size: int = 65536):
+    """
+    Industry-standard async file streamer.
+    Yields file chunks asynchronously to avoid loading the entire 50MB PDF into RAM
+    and prevents blocking the main asyncio event loop with disk I/O.
+    """
+    f = await asyncio.to_thread(open, path, "rb")
+    try:
+        while True:
+            chunk = await asyncio.to_thread(f.read, chunk_size)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        await asyncio.to_thread(f.close)
+
+
 @dataclass
 class DownloadResult:
     """Result of a single candidate download attempt."""
@@ -254,15 +271,14 @@ async def _do_download(
                 upload_url = presigned["uploadUrl"]
                 s3_key = presigned["fileKey"]
 
-                # Upload to S3 directly via HTTP PUT
+                # Upload to S3 directly via HTTP PUT using industry-standard async streaming
                 async with httpx.AsyncClient(timeout=60) as upload_client:
-                    with open(tmp_path, "rb") as f:
-                        upload_resp = await upload_client.put(
-                            upload_url,
-                            content=f,
-                            headers={"Content-Type": "application/pdf"}
-                        )
-                        upload_resp.raise_for_status()
+                    upload_resp = await upload_client.put(
+                        upload_url,
+                        content=_stream_file_async(tmp_path),
+                        headers={"Content-Type": "application/pdf"}
+                    )
+                    upload_resp.raise_for_status()
 
             except ValueError as e:
                 if str(e) == "exceeded_max_size":
