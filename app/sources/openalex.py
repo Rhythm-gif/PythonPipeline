@@ -39,6 +39,7 @@ class OpenAlexConnector(BaseConnector):
 
         while fetched < limit:
             params = {
+                "mailto": "hello@pacr.co",
                 "filter": filters,
                 "sort": "publication_date:desc",
                 "per-page": per_page,

@@ -86,6 +86,8 @@ class BaseConnector(ABC):
         if resp.status_code == 429:
             retry_after = int(resp.headers.get("Retry-After", 10))
             logger.warning("Rate limited", source=self.source, retry_after=retry_after)
+            if retry_after > 60:
+                raise httpx.HTTPStatusError(f"Rate limited excessively ({retry_after}s)", request=resp.request, response=resp)
             await asyncio.sleep(retry_after)
             raise httpx.RemoteProtocolError("Rate limited", request=resp.request)
         resp.raise_for_status()
