@@ -221,21 +221,16 @@ async def _ingest_paper(paper: Paper, counts: dict, run_publish_count: dict) -> 
             
         # Build the payload expected by the PACR Next.js API
         approved_payload = {
-            "source": paper.source.value,
-            "external_id": paper.external_id,
-            "doi": paper.doi,
             "title": paper.title,
-            "abstract": paper.abstract,
+            "abstract": paper.abstract or "Abstract not available. Please read the full text PDF for details.",
+            "doi": paper.doi,
             "authors": [a.name for a in paper.authors],
-            "publication_date": paper.publication_date.isoformat() if paper.publication_date else None,
-            "journal": paper.journal,
-            "funding_sources": getattr(paper, "funding_sources", []),
-            "keywords": paper.keywords,
-            "source_url": paper.source_url,
-            "pdf_url": paper.pdf_url,
-            "s3_key": s3_key,
-            "scores": scores.model_dump(),
-            "q_value": scores.scimago_q_value,
+            "url": paper.source_url or f"https://doi.org/{paper.doi}",
+            "source": paper.journal or "PACR Data Source",
+            "tags": paper.keywords or [],
+            "dateOfPublication": paper.publication_date.isoformat() if paper.publication_date else None,
+            "journalName": paper.journal or "Unknown Journal",
+            "s3_key": s3_key
         }
         
         # ── STRICT PDF REQUIREMENT ──

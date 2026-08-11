@@ -74,10 +74,17 @@ class PacrClient:
                 resp.raise_for_status()
                 return resp.json()
 
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "Backend rejected the paper (400 Bad Request)",
+                title=str(paper_dict.get("title", ""))[:60],
+                status=exc.response.status_code,
+                response_body=exc.response.text,
+            )
+            raise
         except Exception as exc:
             logger.error(
                 "Failed to publish single paper to PACR backend",
-                title=str(paper_dict.get("title", ""))[:60],
                 error=str(exc),
             )
             raise
